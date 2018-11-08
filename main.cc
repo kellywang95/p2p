@@ -4,7 +4,9 @@
 #include <QVBoxLayout>
 #include <QApplication>
 #include <QDebug>
-
+#include <QHostAddress>
+#include <QHostInfo>
+#include <QDateTime>
 #include "main.hh"
 
 ChatDialog::ChatDialog()
@@ -42,9 +44,10 @@ void ChatDialog::gotReturnPressed()
 {
 	// Initially, just echo the string locally.
 	// Insert some networking code here...
+	
 	qDebug() << "FIX: send message to other peers: " << textline->text();
 	textview->append(textline->text());
-
+	
 	// Clear the textline to get ready for the next input message.
 	textline->clear();
 }
@@ -60,7 +63,23 @@ NetSocket::NetSocket()
 	// We use the range from 32768 to 49151 for this purpose.
 	myPortMin = 32768 + (getuid() % 4096)*4;
 	myPortMax = myPortMin + 3;
+	// get host address
+	HostAddress = QHostAddress(QHostAddress::LocalHost);
+    	qDebug() << HostAddress.toString();
+    	QHostInfo info;
+    	originName = info.localHostName() + "-" + QString::number(genRandNum());
+   	qDebug() << originName;
 }
+
+
+int NetSocket::genRandNum()
+{
+    QDateTime current = QDateTime::currentDateTime();
+    uint msecs = current.toTime_t();
+    qsrand(msecs);
+    return qrand();
+}
+
 
 bool NetSocket::bind()
 {

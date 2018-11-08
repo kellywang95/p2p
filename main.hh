@@ -30,9 +30,14 @@ public:
 
 	// Bind this socket to a P2Papp-specific default port.
 	bool bind();
+	int genRandNum();
+	QString originName;
+	QHostAddress HostAddress;
+	
 
 private:
 	int myPortMin, myPortMax;
+
 };
 
 #endif // P2PAPP_MAIN_HH
