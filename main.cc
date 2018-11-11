@@ -33,6 +33,11 @@ ChatDialog::ChatDialog()
 	layout->addWidget(textview);
 	layout->addWidget(textline);
 	setLayout(layout);
+	
+	// Create a UDP network socket
+	udpSocket = new NetSocket(this);
+	if (!udpSocket->bind())
+		exit(1);
 
 	// Register a callback on the textline's returnPressed signal
 	// so that we can send the message entered by the user.
@@ -44,15 +49,46 @@ void ChatDialog::gotReturnPressed()
 {
 	// Initially, just echo the string locally.
 	// Insert some networking code here...
+	qDebug() <<"db1";
+	QString origin = udpSocket->originName;
+	qDebug() <<"db2"<< origin;
+	QString message = textline->text();
+	quint32 seqNo = myWants[origin];
+	qDebug() <<"db3";
+/*
+	//if (myWants.contains(origin)) {
+	//	seqNo = myWants[origin];
+	//	myWants[origin]++;
+	//} else {
+	//	seqNo = 0;
+	//	myWants.insert(origin, 1);
+	} 
+ */
+	qDebug() <<"seqNo:" << seqNo; 
+	myWants[origin]++;
+	writeRumorMessage(origin, seqNo, message);
+	qDebug() << "FIX: send message to other peers: " << message;
 	
-	qDebug() << "FIX: send message to other peers: " << textline->text();
-	textview->append(textline->text());
-	
+	textview->append(message);
 	// Clear the textline to get ready for the next input message.
 	textline->clear();
 }
 
-NetSocket::NetSocket()
+
+void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text)
+{
+	QVariantMap qMap;
+	qMap["ChatText"] = text;
+	qMap["origin"] = origin;
+	qMap["seqNo"] = seqNo;
+	qDebug << "Sending message" << text;
+	
+	
+
+}
+
+
+NetSocket::NetSocket(QObject *parent = NULL): QUdpSocket(parent)
 {
 	// Pick a range of four UDP ports to try to allocate by default,
 	// computed based on my Unix user ID.
@@ -80,6 +116,9 @@ int NetSocket::genRandNum()
     return qrand();
 }
 
+NetSocket::~NetSocket()
+{
+}
 
 bool NetSocket::bind()
 {
@@ -87,6 +126,7 @@ bool NetSocket::bind()
 	for (int p = myPortMin; p <= myPortMax; p++) {
 		if (QUdpSocket::bind(p)) {
 			qDebug() << "bound to UDP port " << p;
+			myPort = p;
 			return true;
 		}
 	}
@@ -94,6 +134,14 @@ bool NetSocket::bind()
 	qDebug() << "Oops, no ports in my default range " << myPortMin
 		<< "-" << myPortMax << " available";
 	return false;
+}
+
+int NetSocket::getWritePort()
+{
+	// Determine which port to send to
+	sendPort = myPort == myPortMin ? myPort + 1 :myPort == myPortMax ? myPort - 1 :(genRandNum() % 2) == 0 ? myPort + 1: myPort - 1;
+    	qDebug() << "Receiver Port: " << QString::number(sendPort);
+   	return sendPort;
 }
 
 int main(int argc, char **argv)
@@ -105,10 +153,8 @@ int main(int argc, char **argv)
 	ChatDialog dialog;
 	dialog.show();
 
-	// Create a UDP network socket
-	NetSocket sock;
-	if (!sock.bind())
-		exit(1);
+	
+	
 
 	// Enter the Qt main loop; everything else is event driven
 	return app.exec();

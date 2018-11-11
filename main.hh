@@ -6,6 +6,35 @@
 #include <QLineEdit>
 #include <QUdpSocket>
 
+class NetSocket : public QUdpSocket
+{
+	Q_OBJECT
+
+public:
+	int myPort;
+	int sendPort;
+	QHostAddress HostAddress;
+
+	NetSocket(QObject *parent);
+	QString originName;
+    	// Bind this socket to a P2Papp-specific default port.
+    	bool bind();
+	//void writeUdp(const QVariantMap &map, int index);
+	// bool readUdp(QVariantMap *map);
+	int genRandNum();
+	int getReceiverPort();
+	~NetSocket();
+	
+	
+
+private:
+	int myPortMin, myPortMax;
+	
+
+};
+
+
+
 class ChatDialog : public QDialog
 {
 	Q_OBJECT
@@ -19,25 +48,11 @@ public slots:
 private:
 	QTextEdit *textview;
 	QLineEdit *textline;
-};
-
-class NetSocket : public QUdpSocket
-{
-	Q_OBJECT
-
-public:
-	NetSocket();
-
-	// Bind this socket to a P2Papp-specific default port.
-	bool bind();
-	int genRandNum();
-	QString originName;
-	QHostAddress HostAddress;
+	NetSocket *udpSocket;
+	QMap<QString, quint32> myWants;
+	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text);
 	
-
-private:
-	int myPortMin, myPortMax;
-
 };
+
 
 #endif // P2PAPP_MAIN_HH
