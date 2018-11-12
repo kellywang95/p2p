@@ -11,26 +11,25 @@ class NetSocket : public QUdpSocket
 	Q_OBJECT
 
 public:
-	int myPort;
-	int sendPort;
-	QHostAddress HostAddress;
-
 	NetSocket(QObject *parent);
-	QString originName;
+	~NetSocket();
+
     	// Bind this socket to a P2Papp-specific default port.
     	bool bind();
-	//void writeUdp(const QVariantMap &map, int index);
 	// bool readUdp(QVariantMap *map);
 	int genRandNum();
-	int getReceiverPort();
-	~NetSocket();
+	int getWritePort();
+	void sendUdpDatagram(const QVariantMap &qMap, int port);
 	
 	
+	int myPort;
+	int sendPort;
+	int recvPort;
+	QHostAddress HostAddress;
+	QString originName;
 
 private:
 	int myPortMin, myPortMax;
-	
-
 };
 
 
@@ -44,14 +43,20 @@ public:
 
 public slots:
 	void gotReturnPressed();
+	void gotReadyRead();
 
 private:
 	QTextEdit *textview;
 	QLineEdit *textline;
 	NetSocket *udpSocket;
-	QMap<QString, quint32> myWants;
+	QMap<QString, QMap<quint32, QString> > allMessages;
+	QVariantMap myWants;
+
 	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text);
-	
+	void writeStatusMessage(int port);
+	void addToMessages(QVariantMap &qMap);
+	void handleStatusMsg(QVariantMap &statusMap);
+	void handleRumorMsg(QVariantMap &rumorMap);
 };
 
 

@@ -43,50 +43,142 @@ ChatDialog::ChatDialog()
 	// so that we can send the message entered by the user.
 	connect(textline, SIGNAL(returnPressed()),
 		this, SLOT(gotReturnPressed()));
+	// Register a callback on the textline's readyRead signal
+	// so that we can send the message entered by the user.
+	connect(udpSocket, SIGNAL(readyRead()),
+		this, SLOT(gotReadyRead()));
 }
 
 void ChatDialog::gotReturnPressed()
 {
 	// Initially, just echo the string locally.
 	// Insert some networking code here...
-	qDebug() <<"db1";
 	QString origin = udpSocket->originName;
-	qDebug() <<"db2"<< origin;
+	qDebug() <<"origin:"<< origin;
 	QString message = textline->text();
-	quint32 seqNo = myWants[origin];
-	qDebug() <<"db3";
+	quint32 seqNo = myWants[origin].toInt();
 /*
-	//if (myWants.contains(origin)) {
-	//	seqNo = myWants[origin];
-	//	myWants[origin]++;
-	//} else {
-	//	seqNo = 0;
-	//	myWants.insert(origin, 1);
+	if (myWants.contains(origin)) {
+		seqNo = myWants[origin];
+		myWants[origin]++;
+	} else {
+		seqNo = 0;
+		myWants.insert(origin, 1);
 	} 
  */
 	qDebug() <<"seqNo:" << seqNo; 
-	myWants[origin]++;
+	myWants[origin] = myWants[origin].toInt() + 1;
 	writeRumorMessage(origin, seqNo, message);
 	qDebug() << "FIX: send message to other peers: " << message;
 	
-	textview->append(message);
+	// textview->append(message);
 	// Clear the textline to get ready for the next input message.
 	textline->clear();
 }
 
+void ChatDialog::gotReadyRead() {
+	QVariantMap qMap, statusMap;
+	QHostAddress serverAdd;
+	quint16 serverPort;
+
+RECV:
+	QByteArray mapData(udpSocket->pendingDatagramSize(), Qt::Uninitialized);
+	udpSocket->readDatagram(mapData.data(), mapData.size(), &serverAdd, &serverPort);
+	QDataStream inStream(&mapData, QIODevice::ReadOnly);
+	udpSocket->recvPort = serverPort;
+	inStream >> (qMap);
+	if (qMap.contains("Want"))
+	{
+	    QDataStream wantStream(&mapData, QIODevice::ReadOnly);
+	    wantStream >> statusMap;
+	    qDebug() << statusMap;
+	    qDebug() << "Receive status msg";
+	    handleStatusMsg(statusMap);
+	}
+	else if(qMap.contains("ChatText"))
+	{
+	    qDebug() << "Receive rumor msg";
+	    handleRumorMsg(qMap);
+	}
+	else
+	{
+	    qDebug() << "Receive unrecognized msg";
+	    qDebug() << qMap;
+	}
+	// mTimeoutTimer->stop();
+    	if (udpSocket->hasPendingDatagrams()) {
+		goto RECV;
+	}
+}
+
+void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
+	QString text = rumorMap["ChatText"].toString();
+	QString origin = rumorMap["Origin"].toString();
+	quint32 seqNo = rumorMap["SeqNo"].toInt();
+
+	// Process msg from other hosts
+	if (origin != udpSocket->originName) {
+
+		if (!myWants.contains(origin)) {
+		    // new host appear
+		    myWants[origin] = 0;
+		}
+		if (seqNo == myWants[origin].toInt()) {
+			myWants[origin] = myWants[origin].toInt() + 1;
+			writeRumorMessage(origin, seqNo, text);
+		}
+		writeStatusMessage(udpSocket->recvPort);
+	}
+}
+
+
 
 void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text)
 {
+	// Gossip message
 	QVariantMap qMap;
 	qMap["ChatText"] = text;
-	qMap["origin"] = origin;
-	qMap["seqNo"] = seqNo;
-	qDebug << "Sending message" << text;
+	qMap["Origin"] = origin;
+	qMap["SeqNo"] = seqNo;
+	qDebug() << "Sending message" << text;
+	quint32 port = udpSocket->getWritePort();
+	addToMessages(qMap);
+	udpSocket->sendUdpDatagram(qMap, port);
 	
-	
-
 }
 
+void ChatDialog::handleStatusMsg(QVariantMap &statusMap) {
+	qDebug() << "enter handleStatusMsg. \nstatusMap: " << statusMap;
+}
+
+void ChatDialog::writeStatusMessage(int port)
+{
+	QVariantMap statusMap;
+	statusMap["Want"] = myWants;
+	qDebug() << "Sending Status: " << statusMap;
+	udpSocket->sendUdpDatagram(statusMap, port);
+}
+
+
+void ChatDialog::addToMessages(QVariantMap &qMap)
+{
+	QString message = qMap["ChatText"].toString();
+	QString origin = qMap["Origin"].toString();
+	quint32 seqNo = qMap["SeqNo"].toInt();
+	
+	if (message.isEmpty()) return;
+	if (!allMessages.contains(origin)){
+		// first message from origin
+		QMap<quint32, QString> tmpMap;
+        	tmpMap.insert(seqNo, message);
+		allMessages.insert(origin, tmpMap);
+	} else {
+		if (!allMessages[origin].contains(seqNo)) {
+			allMessages[origin].insert(seqNo, message);
+		}
+	}
+	this->textview->append(origin + ">: " + message);
+}
 
 NetSocket::NetSocket(QObject *parent = NULL): QUdpSocket(parent)
 {
@@ -136,6 +228,7 @@ bool NetSocket::bind()
 	return false;
 }
 
+
 int NetSocket::getWritePort()
 {
 	// Determine which port to send to
@@ -143,6 +236,20 @@ int NetSocket::getWritePort()
     	qDebug() << "Receiver Port: " << QString::number(sendPort);
    	return sendPort;
 }
+
+
+void NetSocket::sendUdpDatagram(const QVariantMap &qMap, int port)
+{
+	if (qMap.isEmpty()) return;
+
+	QByteArray mapData;
+	QDataStream outStream(&mapData, QIODevice::WriteOnly);
+	outStream << qMap;
+	qDebug() << qMap;
+	qDebug() << "sending message via UDP to port" << port;
+	this->writeDatagram(mapData, HostAddress, port);
+}
+
 
 int main(int argc, char **argv)
 {
@@ -152,9 +259,6 @@ int main(int argc, char **argv)
 	// Create an initial chat dialog window
 	ChatDialog dialog;
 	dialog.show();
-
-	
-	
 
 	// Enter the Qt main loop; everything else is event driven
 	return app.exec();
