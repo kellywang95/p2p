@@ -39,6 +39,8 @@ ChatDialog::ChatDialog()
 	if (!udpSocket->bind())
 		exit(1);
 
+	myWants[udpSocket->originName] = 0;
+
 	// Register a callback on the textline's returnPressed signal
 	// so that we can send the message entered by the user.
 	connect(textline, SIGNAL(returnPressed()),
@@ -65,11 +67,9 @@ void ChatDialog::gotReturnPressed()
 		seqNo = 0;
 		myWants.insert(origin, 1);
 	} 
- */
-	qDebug() <<"seqNo:" << seqNo; 
-	myWants[origin] = myWants[origin].toInt() + 1;
-	writeRumorMessage(origin, seqNo, message);
-	qDebug() << "FIX: send message to other peers: " << message;
+*/
+	qDebug() <<"seqNo:" << seqNo;
+	writeRumorMessage(origin, seqNo, message, -1, true);
 	
 	// textview->append(message);
 	// Clear the textline to get ready for the next input message.
@@ -77,7 +77,8 @@ void ChatDialog::gotReturnPressed()
 }
 
 void ChatDialog::gotReadyRead() {
-	QVariantMap qMap, statusMap;
+	QVariantMap qMap;
+	QMap<QString, QVariantMap> statusMap;
 	QHostAddress serverAdd;
 	quint16 serverPort;
 
@@ -91,19 +92,17 @@ RECV:
 	{
 	    QDataStream wantStream(&mapData, QIODevice::ReadOnly);
 	    wantStream >> statusMap;
-	    qDebug() << statusMap;
-	    qDebug() << "Receive status msg";
-	    handleStatusMsg(statusMap);
+	    qDebug() << "Receive status msg: " << statusMap;
+	    handleStatusMsg(statusMap["Want"], udpSocket->recvPort);
 	}
 	else if(qMap.contains("ChatText"))
 	{
-	    qDebug() << "Receive rumor msg";
+	    qDebug() << "Receive rumor msg: " << qMap;
 	    handleRumorMsg(qMap);
 	}
 	else
 	{
-	    qDebug() << "Receive unrecognized msg";
-	    qDebug() << qMap;
+	    qDebug() << "Receive unrecognized msg" << qMap;
 	}
 	// mTimeoutTimer->stop();
     	if (udpSocket->hasPendingDatagrams()) {
@@ -112,6 +111,7 @@ RECV:
 }
 
 void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
+	qDebug() << "handle rumor: " << rumorMap;
 	QString text = rumorMap["ChatText"].toString();
 	QString origin = rumorMap["Origin"].toString();
 	quint32 seqNo = rumorMap["SeqNo"].toInt();
@@ -123,9 +123,8 @@ void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
 		    // new host appear
 		    myWants[origin] = 0;
 		}
-		if (seqNo == myWants[origin].toInt()) {
-			myWants[origin] = myWants[origin].toInt() + 1;
-			writeRumorMessage(origin, seqNo, text);
+		if (seqNo == (quint32) myWants[origin].toInt()) {
+			writeRumorMessage(origin, seqNo, text, -1, true);
 		}
 		writeStatusMessage(udpSocket->recvPort);
 	}
@@ -133,27 +132,49 @@ void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
 
 
 
-void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text)
+void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text, quint16 port, bool addToMsg)
 {
 	// Gossip message
 	QVariantMap qMap;
 	qMap["ChatText"] = text;
 	qMap["Origin"] = origin;
 	qMap["SeqNo"] = seqNo;
-	qDebug() << "Sending message" << text;
-	quint32 port = udpSocket->getWritePort();
-	addToMessages(qMap);
+	qDebug() << "Write message" << text;
+	if (port == (quint16) -1) {
+		port = udpSocket->getWritePort();
+	}
+	if (addToMsg) addToMessages(qMap);
 	udpSocket->sendUdpDatagram(qMap, port);
-	
+	if ((quint32) myWants[origin].toInt() == seqNo) {
+		myWants[origin] = myWants[origin].toInt() + 1;
+	}
 }
 
-void ChatDialog::handleStatusMsg(QVariantMap &statusMap) {
-	qDebug() << "enter handleStatusMsg. \nstatusMap: " << statusMap;
+void ChatDialog::handleStatusMsg(QVariantMap &gotWants, quint16 port) {
+	qDebug() << "handle wants: " << gotWants << "\nfrom port : " << port;
+	for(QVariantMap::const_iterator iter = gotWants.begin(); iter != gotWants.end(); ++iter) {
+		qDebug() << iter.key() << iter.value();
+		if (!myWants.contains(iter.key())) {
+			myWants[iter.key()] = 0;
+		}
+		if (myWants[iter.key()].toInt() < iter.value().toInt()) {
+			// Send Status back
+			writeStatusMessage(port);
+			return;
+		} else if (myWants[iter.key()].toInt() > iter.value().toInt()) {
+			// Send rumor back
+			QString origin = udpSocket->originName;
+			QString message = allMessages[iter.key()][iter.value().toInt()];
+			quint32 seqNo = iter.value().toInt();
+			writeRumorMessage(origin, seqNo, message, port, false);
+			return;
+		}
+	}
 }
 
 void ChatDialog::writeStatusMessage(int port)
 {
-	QVariantMap statusMap;
+	QMap<QString, QVariantMap> statusMap;
 	statusMap["Want"] = myWants;
 	qDebug() << "Sending Status: " << statusMap;
 	udpSocket->sendUdpDatagram(statusMap, port);
@@ -208,9 +229,7 @@ int NetSocket::genRandNum()
     return qrand();
 }
 
-NetSocket::~NetSocket()
-{
-}
+NetSocket::~NetSocket() {}
 
 bool NetSocket::bind()
 {
@@ -245,8 +264,18 @@ void NetSocket::sendUdpDatagram(const QVariantMap &qMap, int port)
 	QByteArray mapData;
 	QDataStream outStream(&mapData, QIODevice::WriteOnly);
 	outStream << qMap;
-	qDebug() << qMap;
-	qDebug() << "sending message via UDP to port" << port;
+	qDebug() << "sending " << qMap <<  " via UDP to port" << port;
+	this->writeDatagram(mapData, HostAddress, port);
+}
+
+void NetSocket::sendUdpDatagram(const QMap<QString, QVariantMap> &qMap, int port)
+{
+	if (qMap.isEmpty()) return;
+
+	QByteArray mapData;
+	QDataStream outStream(&mapData, QIODevice::WriteOnly);
+	outStream << qMap;
+	qDebug() << "sending " << qMap <<  " via UDP to port" << port;
 	this->writeDatagram(mapData, HostAddress, port);
 }
 

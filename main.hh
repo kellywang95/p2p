@@ -20,6 +20,7 @@ public:
 	int genRandNum();
 	int getWritePort();
 	void sendUdpDatagram(const QVariantMap &qMap, int port);
+	void sendUdpDatagram(const QMap<QString, QVariantMap> &qMap, int port);
 	
 	
 	int myPort;
@@ -52,10 +53,10 @@ private:
 	QMap<QString, QMap<quint32, QString> > allMessages;
 	QVariantMap myWants;
 
-	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text);
+	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text, quint16 port, bool addToMsg);
 	void writeStatusMessage(int port);
 	void addToMessages(QVariantMap &qMap);
-	void handleStatusMsg(QVariantMap &statusMap);
+	void handleStatusMsg(QVariantMap &gotWants, quint16 port);
 	void handleRumorMsg(QVariantMap &rumorMap);
 };
 
