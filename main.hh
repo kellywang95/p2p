@@ -49,21 +49,25 @@ public:
 public slots:
 	void gotReturnPressed();
 	void gotReadyRead();
+	void timeoutHandler();
 	void antiEntropyHandler();
 
 private:
 	QTextEdit *textview;
 	QLineEdit *textline;
 	NetSocket *udpSocket;
+	QTimer *timeoutTimer;
 	QTimer *antiEntropyTimer;
 	
 	QVariantMap myWants;
 	QMap<QString, QMap<quint32, QString> > allMessages;
+	QVariantMap pendingMsg;
 	QMutex mutex1;  // for myWants
 	QMutex mutex2;  // for allMessages
+	QMutex mutex3;  // for pendingMsg
 
 	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text, quint16 port, bool addToMsg);
-	void writeStatusMessage(int port);
+	void writeStatusMessage(int port, QString origin, quint32 seqNo);
 	void addToMessages(QVariantMap &qMap);
 	void handleStatusMsg(QVariantMap &gotWants, quint16 port);
 	void handleRumorMsg(QVariantMap &rumorMap, quint16 port);

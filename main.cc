@@ -44,13 +44,15 @@ ChatDialog::ChatDialog()
 	udpSocket->changeRandomPort();
 	udpSocket->neighborPort = udpSocket->randomPort;
 
+	mutex1.lock();
 	myWants[udpSocket->originName] = 0;
-
-	/*
-	mTimeoutTimer = new QTimer(this);
-	connect(myTimeoutTimer, SIGNAL(timeout()),
+	mutex1.unlock();
+	
+	timeoutTimer = new QTimer(this);
+	timeoutTimer->start(1000);
+	connect(timeoutTimer, SIGNAL(timeout()),
             this, SLOT(timeoutHandler())); 
-	*/
+
 	antiEntropyTimer = new QTimer(this);
 	antiEntropyTimer->start(10 * 1000);
 	connect(antiEntropyTimer, SIGNAL(timeout()),
@@ -73,7 +75,9 @@ void ChatDialog::gotReturnPressed()
 	QString origin = udpSocket->originName;
 	qDebug() <<"origin:"<< origin;
 	QString message = textline->text();
+	mutex1.lock();
 	quint32 seqNo = myWants[origin].toInt();
+	mutex1.unlock();
 
 	qDebug() <<"seqNo:" << seqNo;
 	writeRumorMessage(origin, seqNo, message, -1, true);
@@ -95,19 +99,22 @@ RECV:
 	inStream >> (qMap);
 	if (qMap.contains("Want"))
 	{
-	    QDataStream wantStream(&mapData, QIODevice::ReadOnly);
-	    wantStream >> statusMap;
-	    qDebug() << "Receive status msg: " << statusMap;
-	    handleStatusMsg(statusMap["Want"], serverPort);
+		QDataStream wantStream(&mapData, QIODevice::ReadOnly);
+		wantStream >> statusMap;
+		qDebug() << "Receive status msg: " << statusMap;
+		mutex3.lock();
+		pendingMsg.remove(statusMap["ACK"]["IS"].toString());
+		mutex3.unlock();
+		handleStatusMsg(statusMap["Want"], serverPort);
 	}
 	else if(qMap.contains("ChatText"))
 	{
-	    qDebug() << "Receive rumor msg: " << qMap;
-	    handleRumorMsg(qMap, serverPort);
+		qDebug() << "Receive rumor msg: " << qMap;
+		handleRumorMsg(qMap, serverPort);
 	}
 	else
 	{
-	    qDebug() << "Receive unrecognized msg" << qMap;
+		qDebug() << "Receive unrecognized msg" << qMap;
 	}
 	// mTimeoutTimer->stop();
     	if (udpSocket->hasPendingDatagrams()) {
@@ -120,11 +127,51 @@ RECV:
 // if timer fires, send out status message
 void ChatDialog::antiEntropyHandler() {
 	qDebug() << "AntiEntropyHandler called";
-	writeStatusMessage(udpSocket->randomPort);
+	writeStatusMessage(udpSocket->randomPort, "null", -1);
 	antiEntropyTimer->start(10 * 1000);
 	udpSocket->changeRandomPort();
 }
 
+
+void ChatDialog::timeoutHandler() {
+	qDebug() << "TimeoutHandler called";
+	mutex3.lock();
+	// TODO: don't work on pendingMsg while traversing it.
+	for (QVariantMap::const_iterator iter = pendingMsg.begin(); iter != pendingMsg.end(); ++iter) {
+		if (iter.value().toInt() == (quint32) 0) {
+			pendingMsg[iter.key()] = 1;
+		} else if (iter.value().toInt() == (quint32) 1) {
+			pendingMsg[iter.key()] = 2;
+		} else if (iter.value().toInt() <= (quint32) 5) {
+			int pos = 0;
+			std::string port, origin, seqNo, delimiter = "$", s = iter.key().toStdString();
+
+			pos = s.find(delimiter);
+			port = s.substr(0, pos);
+			s.erase(0, pos + delimiter.length());
+
+			pos = s.find(delimiter);
+			origin = s.substr(0, pos);
+			s.erase(0, pos + delimiter.length());
+
+			seqNo = s;
+
+			QString Qorigin = QString::fromStdString(origin);
+			quint16 Qport = QString::fromStdString(port).toInt();
+			quint32 QseqNo = QString::fromStdString(seqNo).toInt();
+			mutex2.lock();
+			QString Qtext = allMessages[Qorigin][QseqNo];
+			mutex2.unlock();
+
+			writeRumorMessage(Qorigin, QseqNo, Qtext, Qport, false);
+		} else {
+			pendingMsg.remove[iter.key()];
+		}
+			
+	}
+	mutex3.unlock();
+	timeoutTimer->start(1000);
+}
 
 void ChatDialog::handleRumorMsg(QVariantMap &rumorMap, quint16 port) {
 	udpSocket->neighborPort = port;
@@ -135,18 +182,17 @@ void ChatDialog::handleRumorMsg(QVariantMap &rumorMap, quint16 port) {
 
 	// Process msg from other hosts
 	if (origin != udpSocket->originName) {
-
+		mutex1.lock();
 		if (!myWants.contains(origin)) {
 			// new host appear
-			mutex1.lock();
 		    	myWants[origin] = 0;
-			mutex1.unlock();
 		}
 		if (seqNo == (quint32) myWants[origin].toInt()) {
 			writeRumorMessage(origin, seqNo, text, udpSocket->resendRumorPort(port), true);
 		}
-		writeStatusMessage(port);
+		mutex1.unlock();		
 	}
+	writeStatusMessage(port, origin, seqNo);
 }
 
 
@@ -162,44 +208,59 @@ void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text
 	if (port == (quint16) -1) {
 		port = udpSocket->neighborPort;
 	}
-	mutex2.lock();
+
 	if (addToMsg) addToMessages(qMap);
-	mutex2.unlock();
+	
 	udpSocket->sendUdpDatagram(qMap, port);
+	mutex1.lock();
+	qDebug() << "!!!!!!!!!!db1\n";
 	if ((quint32) myWants[origin].toInt() == seqNo) {
-		mutex1.lock();
 		myWants[origin] = myWants[origin].toInt() + 1;
-		mutex1.unlock();
 	}
+	mutex1.unlock();
+	qDebug() << "!!!!!!!!!!db2\n";
+	mutex3.lock();
+	QString needAck = QString::number(port) + "$" +  origin + "$" + QString::number(seqNo);
+	if (!pendingMsg.contains(needAck)) pendingMsg[needAck] = 0;
+	mutex3.unlock();
 }
 
 void ChatDialog::handleStatusMsg(QVariantMap &gotWants, quint16 port) {
 	udpSocket->neighborPort = port;
 	qDebug() << "handle wants: " << gotWants << "\nfrom port : " << port;
-	for(QVariantMap::const_iterator iter = gotWants.begin(); iter != gotWants.end(); ++iter) {
+	for (QVariantMap::const_iterator iter = gotWants.begin(); iter != gotWants.end(); ++iter) {
 		qDebug() << iter.key() << iter.value();
+		mutex1.lock();
 		if (!myWants.contains(iter.key())) {
 			myWants[iter.key()] = 0;
 		}
 		if (myWants[iter.key()].toInt() < iter.value().toInt()) {
 			// Send Status back, need more msg
-			writeStatusMessage(port);
+			writeStatusMessage(port, "null", -1);
 			return;
 		} else if (myWants[iter.key()].toInt() > iter.value().toInt()) {
 			// Send rumor back
 			QString origin = iter.key();
+			mutex2.lock();
 			QString message = allMessages[iter.key()][iter.value().toInt()];
+			mutex2.unlock();
 			quint32 seqNo = iter.value().toInt();
 			writeRumorMessage(origin, seqNo, message, port, false);
 			return;
 		}
+		mutex1.unlock();
 	}
 }
 
-void ChatDialog::writeStatusMessage(int port)
+void ChatDialog::writeStatusMessage(int port, QString origin, quint32 seqNo)
 {
 	QMap<QString, QVariantMap> statusMap;
+	mutex1.lock();
 	statusMap["Want"] = myWants;
+	QVariantMap tmpMap;
+	tmpMap["IS"] = QString::number(udpSocket->myPort) + "$" +  origin + "$" + QString::number(seqNo);
+	statusMap["ACK"] = tmpMap;
+	mutex1.unlock();
 	qDebug() << "Sending Status: " << statusMap;
 	udpSocket->sendUdpDatagram(statusMap, port);
 }
@@ -207,11 +268,14 @@ void ChatDialog::writeStatusMessage(int port)
 
 void ChatDialog::addToMessages(QVariantMap &qMap)
 {
+	qDebug() << "!!!!!!!!!!db5\n";
 	QString message = qMap["ChatText"].toString();
 	QString origin = qMap["Origin"].toString();
 	quint32 seqNo = qMap["SeqNo"].toInt();
 	
 	if (message.isEmpty()) return;
+	mutex2.lock();
+	qDebug() << "!!!!!!!!!!db3\n";
 	if (!allMessages.contains(origin)){
 		// first message from origin
 		QMap<quint32, QString> tmpMap;
@@ -222,7 +286,11 @@ void ChatDialog::addToMessages(QVariantMap &qMap)
 			allMessages[origin].insert(seqNo, message);
 		}
 	}
+	mutex2.unlock();
+	qDebug() << "!!!!!!!!!!db4\n";
 	this->textview->append(origin + ">: " + message);
+	qDebug() << "!!!!!!!!!!db6\n";
+
 }
 
 NetSocket::NetSocket(QObject *parent = NULL): QUdpSocket(parent)
