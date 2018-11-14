@@ -20,14 +20,16 @@ public:
     	bool bind();
 	// bool readUdp(QVariantMap *map);
 	int genRandNum();
-	int getWritePort();
+	//int getWritePort();
+	int resendRumorPort(int port);
+	void changeRandomPort();
 	void sendUdpDatagram(const QVariantMap &qMap, int port);
 	void sendUdpDatagram(const QMap<QString, QVariantMap> &qMap, int port);
 	
 	
 	int myPort;
-	int sendPort;
-	int recvPort;
+	int neighborPort;
+	int randomPort; //for anti-entropy
 	QHostAddress HostAddress;
 	QString originName;
 
@@ -54,8 +56,9 @@ private:
 	QLineEdit *textline;
 	NetSocket *udpSocket;
 	QTimer *antiEntropyTimer;
-	QMap<QString, QMap<quint32, QString> > allMessages;
+	
 	QVariantMap myWants;
+	QMap<QString, QMap<quint32, QString> > allMessages;
 	QMutex mutex1;  // for myWants
 	QMutex mutex2;  // for allMessages
 
@@ -63,7 +66,7 @@ private:
 	void writeStatusMessage(int port);
 	void addToMessages(QVariantMap &qMap);
 	void handleStatusMsg(QVariantMap &gotWants, quint16 port);
-	void handleRumorMsg(QVariantMap &rumorMap);
+	void handleRumorMsg(QVariantMap &rumorMap, quint16 port);
 };
 
 

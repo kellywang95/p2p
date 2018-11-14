@@ -41,6 +41,9 @@ ChatDialog::ChatDialog()
 	if (!udpSocket->bind())
 		exit(1);
 
+	udpSocket->changeRandomPort();
+	udpSocket->neighborPort = udpSocket->randomPort;
+
 	myWants[udpSocket->originName] = 0;
 
 	/*
@@ -89,19 +92,18 @@ RECV:
 	QByteArray mapData(udpSocket->pendingDatagramSize(), Qt::Uninitialized);
 	udpSocket->readDatagram(mapData.data(), mapData.size(), &serverAdd, &serverPort);
 	QDataStream inStream(&mapData, QIODevice::ReadOnly);
-	udpSocket->recvPort = serverPort;
 	inStream >> (qMap);
 	if (qMap.contains("Want"))
 	{
 	    QDataStream wantStream(&mapData, QIODevice::ReadOnly);
 	    wantStream >> statusMap;
 	    qDebug() << "Receive status msg: " << statusMap;
-	    handleStatusMsg(statusMap["Want"], udpSocket->recvPort);
+	    handleStatusMsg(statusMap["Want"], serverPort);
 	}
 	else if(qMap.contains("ChatText"))
 	{
 	    qDebug() << "Receive rumor msg: " << qMap;
-	    handleRumorMsg(qMap);
+	    handleRumorMsg(qMap, serverPort);
 	}
 	else
 	{
@@ -109,6 +111,7 @@ RECV:
 	}
 	// mTimeoutTimer->stop();
     	if (udpSocket->hasPendingDatagrams()) {
+		qDebug() << "!!!hasPendingDatagrams \n";
 		goto RECV;
 	}
 }
@@ -116,13 +119,15 @@ RECV:
 
 // if timer fires, send out status message
 void ChatDialog::antiEntropyHandler() {
-    qDebug() << "AntiEntropyHandler called";
-    writeStatusMessage(udpSocket->getWritePort());
-    antiEntropyTimer->start(10 * 1000);
+	qDebug() << "AntiEntropyHandler called";
+	writeStatusMessage(udpSocket->randomPort);
+	antiEntropyTimer->start(10 * 1000);
+	udpSocket->changeRandomPort();
 }
 
 
-void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
+void ChatDialog::handleRumorMsg(QVariantMap &rumorMap, quint16 port) {
+	udpSocket->neighborPort = port;
 	qDebug() << "handle rumor: " << rumorMap;
 	QString text = rumorMap["ChatText"].toString();
 	QString origin = rumorMap["Origin"].toString();
@@ -138,9 +143,9 @@ void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
 			mutex1.unlock();
 		}
 		if (seqNo == (quint32) myWants[origin].toInt()) {
-			writeRumorMessage(origin, seqNo, text, -1, true);
+			writeRumorMessage(origin, seqNo, text, udpSocket->resendRumorPort(port), true);
 		}
-		writeStatusMessage(udpSocket->recvPort);
+		writeStatusMessage(port);
 	}
 }
 
@@ -155,7 +160,7 @@ void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text
 	qMap["SeqNo"] = seqNo;
 	qDebug() << "Write message" << text;
 	if (port == (quint16) -1) {
-		port = udpSocket->getWritePort();
+		port = udpSocket->neighborPort;
 	}
 	mutex2.lock();
 	if (addToMsg) addToMessages(qMap);
@@ -169,6 +174,7 @@ void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text
 }
 
 void ChatDialog::handleStatusMsg(QVariantMap &gotWants, quint16 port) {
+	udpSocket->neighborPort = port;
 	qDebug() << "handle wants: " << gotWants << "\nfrom port : " << port;
 	for(QVariantMap::const_iterator iter = gotWants.begin(); iter != gotWants.end(); ++iter) {
 		qDebug() << iter.key() << iter.value();
@@ -176,12 +182,12 @@ void ChatDialog::handleStatusMsg(QVariantMap &gotWants, quint16 port) {
 			myWants[iter.key()] = 0;
 		}
 		if (myWants[iter.key()].toInt() < iter.value().toInt()) {
-			// Send Status back
+			// Send Status back, need more msg
 			writeStatusMessage(port);
 			return;
 		} else if (myWants[iter.key()].toInt() > iter.value().toInt()) {
 			// Send rumor back
-			QString origin = udpSocket->originName;
+			QString origin = iter.key();
 			QString message = allMessages[iter.key()][iter.value().toInt()];
 			quint32 seqNo = iter.value().toInt();
 			writeRumorMessage(origin, seqNo, message, port, false);
@@ -265,15 +271,47 @@ bool NetSocket::bind()
 	return false;
 }
 
+void NetSocket::changeRandomPort(){
+	if (randomPort < myPortMin || randomPort > myPortMax) {
+		randomPort = myPort;
+	}
+	randomPort++;
+	if (randomPort == myPort) {
+		randomPort++;
+	}
+	if (randomPort > myPortMax) {
+		randomPort = myPortMin;
+	}
+}
 
+int NetSocket::resendRumorPort(int port){
+	int newPort = port;
+	newPort++;
+	if (newPort == myPort) {
+		newPort++;
+	}
+	if (newPort > myPortMax) {
+		newPort = myPortMin;
+	}
+	return newPort;
+}
+
+/*
 int NetSocket::getWritePort()
 {
 	// Determine which port to send to
-	sendPort = myPort == myPortMin ? myPort + 1 :myPort == myPortMax ? myPort - 1 :(genRandNum() % 2) == 0 ? myPort + 1: myPort - 1;
+	//sendPort = myPort == myPortMin ? myPort + 1 :myPort == myPortMax ? myPort - 1 :(genRandNum() % 2) == 0 ? myPort + 1: myPort - 1;
+	
+	for (int p = myPortMin; p <= myPortMax; p++) {
+		// if is in use
+		sendPort = p;
+	} 
+	sendPort = rand()%((myPortMax - myPortMin) + 1) + myPortMin;
     	qDebug() << "Send to Port: " << QString::number(sendPort);
    	return sendPort;
+	
 }
-
+*/
 
 void NetSocket::sendUdpDatagram(const QVariantMap &qMap, int port)
 {
