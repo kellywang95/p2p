@@ -5,6 +5,8 @@
 #include <QTextEdit>
 #include <QLineEdit>
 #include <QUdpSocket>
+#include <QMutex>
+#include <QTimer>
 
 class NetSocket : public QUdpSocket
 {
@@ -45,13 +47,17 @@ public:
 public slots:
 	void gotReturnPressed();
 	void gotReadyRead();
+	void antiEntropyHandler();
 
 private:
 	QTextEdit *textview;
 	QLineEdit *textline;
 	NetSocket *udpSocket;
+	QTimer *antiEntropyTimer;
 	QMap<QString, QMap<quint32, QString> > allMessages;
 	QVariantMap myWants;
+	QMutex mutex1;  // for myWants
+	QMutex mutex2;  // for allMessages
 
 	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text, quint16 port, bool addToMsg);
 	void writeStatusMessage(int port);

@@ -7,6 +7,8 @@
 #include <QHostAddress>
 #include <QHostInfo>
 #include <QDateTime>
+#include <QTimer>
+#include <QMutex>
 #include "main.hh"
 
 ChatDialog::ChatDialog()
@@ -41,6 +43,16 @@ ChatDialog::ChatDialog()
 
 	myWants[udpSocket->originName] = 0;
 
+	/*
+	mTimeoutTimer = new QTimer(this);
+	connect(myTimeoutTimer, SIGNAL(timeout()),
+            this, SLOT(timeoutHandler())); 
+	*/
+	antiEntropyTimer = new QTimer(this);
+	antiEntropyTimer->start(10 * 1000);
+	connect(antiEntropyTimer, SIGNAL(timeout()),
+            this, SLOT(antiEntropyHandler()));
+
 	// Register a callback on the textline's returnPressed signal
 	// so that we can send the message entered by the user.
 	connect(textline, SIGNAL(returnPressed()),
@@ -59,19 +71,10 @@ void ChatDialog::gotReturnPressed()
 	qDebug() <<"origin:"<< origin;
 	QString message = textline->text();
 	quint32 seqNo = myWants[origin].toInt();
-/*
-	if (myWants.contains(origin)) {
-		seqNo = myWants[origin];
-		myWants[origin]++;
-	} else {
-		seqNo = 0;
-		myWants.insert(origin, 1);
-	} 
-*/
+
 	qDebug() <<"seqNo:" << seqNo;
 	writeRumorMessage(origin, seqNo, message, -1, true);
 	
-	// textview->append(message);
 	// Clear the textline to get ready for the next input message.
 	textline->clear();
 }
@@ -110,6 +113,15 @@ RECV:
 	}
 }
 
+
+// if timer fires, send out status message
+void ChatDialog::antiEntropyHandler() {
+    qDebug() << "AntiEntropyHandler called";
+    writeStatusMessage(udpSocket->getWritePort());
+    antiEntropyTimer->start(10 * 1000);
+}
+
+
 void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
 	qDebug() << "handle rumor: " << rumorMap;
 	QString text = rumorMap["ChatText"].toString();
@@ -120,8 +132,10 @@ void ChatDialog::handleRumorMsg(QVariantMap &rumorMap) {
 	if (origin != udpSocket->originName) {
 
 		if (!myWants.contains(origin)) {
-		    // new host appear
-		    myWants[origin] = 0;
+			// new host appear
+			mutex1.lock();
+		    	myWants[origin] = 0;
+			mutex1.unlock();
 		}
 		if (seqNo == (quint32) myWants[origin].toInt()) {
 			writeRumorMessage(origin, seqNo, text, -1, true);
@@ -143,10 +157,14 @@ void ChatDialog::writeRumorMessage(QString &origin, quint32 seqNo, QString &text
 	if (port == (quint16) -1) {
 		port = udpSocket->getWritePort();
 	}
+	mutex2.lock();
 	if (addToMsg) addToMessages(qMap);
+	mutex2.unlock();
 	udpSocket->sendUdpDatagram(qMap, port);
 	if ((quint32) myWants[origin].toInt() == seqNo) {
+		mutex1.lock();
 		myWants[origin] = myWants[origin].toInt() + 1;
+		mutex1.unlock();
 	}
 }
 
@@ -252,7 +270,7 @@ int NetSocket::getWritePort()
 {
 	// Determine which port to send to
 	sendPort = myPort == myPortMin ? myPort + 1 :myPort == myPortMax ? myPort - 1 :(genRandNum() % 2) == 0 ? myPort + 1: myPort - 1;
-    	qDebug() << "Receiver Port: " << QString::number(sendPort);
+    	qDebug() << "Send to Port: " << QString::number(sendPort);
    	return sendPort;
 }
 
