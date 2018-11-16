@@ -66,8 +66,8 @@ private:
 	QMutex mutex2;  // for allMessages
 	QMutex mutex3;  // for pendingMsg
 
-	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text, quint16 port, bool addToMsg);
-	void writeStatusMessage(int port, QString origin, quint32 seqNo);
+	void writeRumorMessage(QString &origin, quint32 seqNo, QString &text, qint32 port, bool addToMsg);
+	void writeStatusMessage(int port, QString origin, qint32 seqNo);
 	void addToMessages(QVariantMap &qMap);
 	void handleStatusMsg(QVariantMap &gotWants, quint16 port);
 	void handleRumorMsg(QVariantMap &rumorMap, quint16 port);
